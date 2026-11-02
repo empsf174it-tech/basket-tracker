@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  background: #0b0f14;
+  color: #fff;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@layer components {
+  .btn {
+    @apply min-h-[52px] rounded-xl px-5 text-lg font-semibold active:scale-[0.98] transition disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-black;
+  }
+  .btn-ghost {
+    @apply btn bg-panel text-white border border-white/15;
+  }
+  .seg {
+    @apply flex-1 min-h-[52px] rounded-lg text-lg font-semibold;
+  }
+}
