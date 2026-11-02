@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LM } from './landmarks';
-import { ShotDetector, type DetectorFrame } from './shotDetector';
+import { ShotDetector, type DetectorEvent, type DetectorFrame } from './shotDetector';
 import type { Pose } from './types';
 
 const W = 1000;
@@ -85,9 +85,13 @@ function framesFor(keys: Key[], fps = 30): DetectorFrame[] {
   return out;
 }
 
-function run(frames: DetectorFrame[]) {
+function events(frames: DetectorFrame[]): DetectorEvent[] {
   const d = new ShotDetector({ hand: 'right', heightCm: 180 });
-  return frames.map((f) => d.push(f)).filter((s) => s !== null);
+  return frames.map((f) => d.push(f)).filter((e) => e !== null);
+}
+
+function run(frames: DetectorFrame[]) {
+  return events(frames).flatMap((e) => (e.kind === 'shot' ? [e.shot] : []));
 }
 
 describe('ShotDetector', () => {
@@ -135,6 +139,20 @@ describe('ShotDetector', () => {
     const keys = shotKeys(0).map((k) =>
       k.wrist[1] < 230 ? { ...k, elbow: [540, 300] as XY, wrist: [540, 200] as XY } : k,
     );
-    expect(run(framesFor(keys))).toHaveLength(0);
+    expect(events(framesFor(keys))).toEqual([
+      { kind: 'rejected', reason: 'partial', tEnd: expect.any(Number) },
+    ]);
+  });
+
+  it('does not count a shot taken while not side-on or out of frame', () => {
+    const frames = framesFor(shotKeys(0)).map((f) => ({ ...f, countable: f.t < 800 }));
+    expect(events(frames)).toEqual([
+      { kind: 'rejected', reason: 'quality', tEnd: expect.any(Number) },
+    ]);
+  });
+
+  it('tolerates a few bad frames during a shot', () => {
+    const frames = framesFor(shotKeys(0)).map((f, i) => ({ ...f, countable: i % 5 !== 0 }));
+    expect(run(frames)).toHaveLength(1);
   });
 });

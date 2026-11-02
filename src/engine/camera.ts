@@ -12,7 +12,14 @@ export class CameraError extends Error {
   }
 }
 
-/** Open the camera, preferring a portrait 720p stream at 30 fps. */
+/** What the camera actually delivers (requests are only "ideal"). */
+export interface CameraInfo {
+  width: number;
+  height: number;
+  frameRate: number | null;
+}
+
+/** Open the camera, asking for portrait 720p at 60 fps (ideal, not exact). */
 export async function openCamera(facing: Facing): Promise<MediaStream> {
   if (!window.isSecureContext) {
     throw new CameraError('Camera needs HTTPS (or localhost).', 'insecure');
@@ -27,7 +34,7 @@ export async function openCamera(facing: Facing): Promise<MediaStream> {
         facingMode: { ideal: facing },
         width: { ideal: 720 },
         height: { ideal: 1280 },
-        frameRate: { ideal: 30 },
+        frameRate: { ideal: 60 },
       },
     });
   } catch (e) {
@@ -43,6 +50,15 @@ export async function openCamera(facing: Facing): Promise<MediaStream> {
       throw new CameraError('The camera is in use by another app.', 'inUse');
     throw new CameraError(`Could not open the camera (${name ?? 'unknown error'}).`, 'unknown');
   }
+}
+
+export function cameraInfo(stream: MediaStream | null, video: HTMLVideoElement): CameraInfo | null {
+  const track = stream?.getVideoTracks()[0];
+  const s = track?.getSettings();
+  const width = video.videoWidth || s?.width || 0;
+  const height = video.videoHeight || s?.height || 0;
+  if (!width || !height) return null;
+  return { width, height, frameRate: s?.frameRate ? Math.round(s.frameRate) : null };
 }
 
 export function stopStream(stream: MediaStream | null): void {

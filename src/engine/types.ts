@@ -1,3 +1,5 @@
+import type { FrameQuality } from './quality';
+
 /** A single pose landmark in normalised image coordinates (0..1), as produced by MediaPipe. */
 export interface Landmark {
   x: number;
@@ -32,4 +34,6 @@ export interface EngineSnapshot {
   fps: number;
   inferenceMs: number;
   delegate: 'GPU' | 'CPU' | null;
+  /** Side-on and framing checks for the latest frame. */
+  quality: FrameQuality | null;
 }

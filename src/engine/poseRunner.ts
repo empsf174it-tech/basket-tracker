@@ -1,6 +1,19 @@
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 import type { Pose } from './types';
 
+/** PoseLandmarker model variant: lite is fastest, heavy is most accurate. */
+export type ModelQuality = 'lite' | 'full' | 'heavy';
+
+export const MODEL_QUALITIES: readonly { id: ModelQuality; label: string }[] = [
+  { id: 'lite', label: 'Speed' },
+  { id: 'full', label: 'Balanced' },
+  { id: 'heavy', label: 'Accurate' },
+];
+
+export function modelFile(q: ModelQuality): string {
+  return `pose_landmarker_${q}.task`;
+}
+
 export interface PoseRunnerOptions {
   /** URL of the folder containing the MediaPipe wasm files. */
   wasmBaseUrl: string;

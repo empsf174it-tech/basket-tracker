@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { MODEL_QUALITIES, type ModelQuality } from '../../engine/poseRunner';
 import { SHOT_TYPES, type ShotTypeId } from '../../engine/shotTypes';
 import { useApp } from '../../store/app';
 import { useSettings } from '../../store/settings';
@@ -69,6 +70,17 @@ export function SetupScreen() {
           ]}
           onChange={(analysisSide) => s.set({ analysisSide })}
         />
+        <h2 className="text-sm uppercase tracking-wide text-white/60">Model quality</h2>
+        <Segmented<ModelQuality>
+          label="Model quality"
+          value={s.model}
+          options={MODEL_QUALITIES.map((m) => ({ value: m.id, label: m.label }))}
+          onChange={(model) => s.set({ model })}
+        />
+        <p className="-mt-1 text-sm text-white/60">
+          Balanced suits most phones. Accurate is slower and downloads ~31 MB the first time. The
+          app suggests a lighter model if tracking stays below 20 fps.
+        </p>
         <Toggle
           label="Mirror preview"
           on={s.mirrored}
@@ -97,8 +109,17 @@ export function SetupScreen() {
           <li>Whole body plus fully raised arms in frame, with some space above your hands.</li>
           <li>Good, even light; fitted clothing so joints are visible.</li>
           <li>
+            Hold a real ball. Shadow shooting without a ball changes your mechanics, so its numbers
+            are not comparable.
+          </li>
+          <li>
+            Check the ceiling clearance first, and only shoot toward a soft target (mattress, net,
+            wall pad) if it is safe.
+          </li>
+          <li>
             Shots are counted automatically: start with the ball below your shoulders, shoot, and
-            let your hand come back down. Each shot is saved on the phone straight away.
+            let your hand come back down. Each shot is saved on the phone straight away. Shots are
+            not counted while the app shows a yellow warning.
           </li>
           <li>Elbow flare cannot be measured from a side view.</li>
         </ul>

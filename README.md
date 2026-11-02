@@ -2,8 +2,12 @@
 
 Side-view basketball shooting form analysis on your phone. Everything runs on-device.
 
-> Stage 2 of 5: automatic shot detection, per-shot measurements, on-phone database, history and export.
-> (Stage 1: camera, skeleton overlay, live joint angles, Pages deploy.) The full README comes in stage 5.
+> Progress against [SPEC.md](SPEC.md) (7 stages):
+> - **Stage 1 done:** camera (60 fps requested), skeleton overlay, live angles, side-on and framing
+>   checks, model quality (Speed / Balanced / Accurate), FPS and camera info, Pages deploy.
+> - **Stage 2 in progress:** shot detection, per-shot metrics and saving are in; calibration, physics,
+>   slow-mo upload analysis and the fixture recorder are next. (History and export, from Stage 4,
+>   are already in.)
 
 ## How shots are saved
 

@@ -11,7 +11,14 @@ export interface DetectorFrame {
   side: Side;
   width: number;
   height: number;
+  /** False when the side-on or framing check failed for this frame. Defaults to true. */
+  countable?: boolean;
 }
+
+export type RejectReason = 'quality' | 'partial';
+
+export type DetectorEvent =
+  { kind: 'shot'; shot: DetectedShot } | { kind: 'rejected'; reason: RejectReason; tEnd: number };
 
 export interface DetectorConfig {
   /** Shooting hand (used for the arm). */
@@ -37,6 +44,8 @@ const MAX_RISE_MS = 1500;
 const MIN_RELEASE_ELBOW = 130;
 /** Release = first frame within this many degrees of the fullest elbow extension. */
 const RELEASE_TOLERANCE_DEG = 3;
+/** A shot is not counted if more than this share of its frames failed the side-on/framing check. */
+const MAX_BAD_FRAME_SHARE = 0.3;
 
 // Drillis & Contini body proportions (fraction of standing height).
 const SHOULDER_TO_ANKLE = 0.818 - 0.039;
@@ -48,6 +57,7 @@ interface Sample {
   side: Side;
   w: number;
   h: number;
+  ok: boolean;
 }
 
 /**
@@ -74,11 +84,18 @@ export class ShotDetector {
     this.riseStart = null;
   }
 
-  push(f: DetectorFrame): DetectedShot | null {
+  push(f: DetectorFrame): DetectorEvent | null {
     const timedOut = this.riseStart !== null && f.t - this.riseStart > MAX_RISE_MS;
     if (!f.pose) return timedOut ? this.finish(false) : null;
 
-    const s: Sample = { t: f.t, pose: f.pose, side: f.side, w: f.width, h: f.height };
+    const s: Sample = {
+      t: f.t,
+      pose: f.pose,
+      side: f.side,
+      w: f.width,
+      h: f.height,
+      ok: f.countable ?? true,
+    };
     this.buf.push(s);
     while (this.buf.length && this.buf[0]!.t < f.t - BUFFER_MS) this.buf.shift();
 
@@ -100,7 +117,7 @@ export class ShotDetector {
     return null;
   }
 
-  private finish(nowBelowShoulder: boolean): DetectedShot | null {
+  private finish(nowBelowShoulder: boolean): DetectorEvent {
     const start = this.riseStart!;
     this.riseStart = null;
     this.armed = nowBelowShoulder;
@@ -109,21 +126,27 @@ export class ShotDetector {
   }
 }
 
-/** Measures one shot from the buffered samples. Returns null if it does not look like a shot. */
+/** Measures one shot from the buffered samples, or says why it was not counted. */
 export function analyseShot(
   buf: readonly Sample[],
   tStart: number,
   tEnd: number,
   cfg: DetectorConfig,
-): DetectedShot | null {
+): DetectorEvent {
   const H = cfg.heightCm;
   const arm = sideIndices(cfg.hand);
+  const reject = (reason: RejectReason): DetectorEvent => ({ kind: 'rejected', reason, tEnd });
 
   // Release: first frame near the fullest elbow extension while the hand is up.
   const up = buf.filter((s) => s.t >= tStart - 300 && s.t <= tEnd);
   const elbows = up.map((s) => ({ s, a: tri(s, arm.shoulder, arm.elbow, arm.wrist) }));
   const maxElbow = Math.max(...elbows.map((e) => e.a ?? -Infinity));
-  if (!Number.isFinite(maxElbow) || maxElbow < MIN_RELEASE_ELBOW) return null;
+  if (!Number.isFinite(maxElbow) || maxElbow < MIN_RELEASE_ELBOW) return reject('partial');
+
+  // Side-on / framing: the motion from just before the rise to the end must be mostly clean.
+  const motion = buf.filter((s) => s.t >= tStart - 500 && s.t <= tEnd);
+  const bad = motion.filter((s) => !s.ok).length;
+  if (!motion.length || bad / motion.length > MAX_BAD_FRAME_SHARE) return reject('quality');
   const release = elbows.find((e) => e.a !== null && e.a >= maxElbow - RELEASE_TOLERANCE_DEG)!;
   const r = release.s;
   const tRelease = r.t;
@@ -183,7 +206,7 @@ export function analyseShot(
     .filter((s) => s.t >= tRelease - LOOKBACK_MS && s.t <= tEnd)
     .map((s) => ({ t: Math.round(s.t - tRelease), pose: compactPose(s.pose) }));
 
-  return {
+  const shot: DetectedShot = {
     tStart,
     tRelease,
     tEnd,
@@ -200,6 +223,7 @@ export function analyseShot(
       tempoMs: tDip !== null ? Math.round(tRelease - tDip) : null,
     },
   };
+  return { kind: 'shot', shot };
 }
 
 function point(s: Sample, i: number): Point | null {

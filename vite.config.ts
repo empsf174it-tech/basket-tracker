@@ -26,7 +26,20 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,wasm,task}'],
+        // The heavy model (~31 MB) is cached on first use instead of on first visit.
+        globIgnores: ['**/pose_landmarker_heavy.task'],
         maximumFileSizeToCacheInBytes: 30 * 1024 * 1024,
+        runtimeCaching: [
+          {
+            urlPattern: /pose_landmarker_heavy\.task$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'pose-model-heavy',
+              cacheableResponse: { statuses: [0, 200] },
+              rangeRequests: true,
+            },
+          },
+        ],
       },
     }),
   ],

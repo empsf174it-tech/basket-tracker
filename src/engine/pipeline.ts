@@ -1,12 +1,15 @@
 import { jointAngles, resolveSide } from './geometry';
 import { drawOverlay } from './overlay';
 import { PoseRunner, type PoseRunnerOptions } from './poseRunner';
+import { assessFrame, type FrameQuality } from './quality';
 import { PoseSmoother } from './smoothing';
 import type { EngineSnapshot, JointAngles, Pose, Side, SideSetting } from './types';
 
 export interface PipelineOptions {
   side: SideSetting;
   mirrored: boolean;
+  /** Shooting hand, for the framing check on the raised wrist. */
+  hand: Side;
 }
 
 export interface FrameEvent {
@@ -18,6 +21,10 @@ export interface FrameEvent {
   /** Video size in pixels (landmarks are normalised to this). */
   width: number;
   height: number;
+  /** Side-on and framing checks; null when no pose. */
+  quality: FrameQuality | null;
+  /** True when the frame passed the side-on and framing checks (reps may be counted). */
+  countable: boolean;
 }
 
 type Listener<T> = (v: T) => void;
@@ -50,6 +57,8 @@ export class FormPipeline {
     angles: EMPTY_ANGLES,
     width: 0,
     height: 0,
+    quality: null,
+    countable: false,
   };
   private snapshotListeners = new Set<Listener<EngineSnapshot>>();
   private frameListeners = new Set<Listener<FrameEvent>>();
@@ -148,7 +157,17 @@ export class FormPipeline {
     const pose = raw ? this.smoother.smooth(raw, t) : null;
     const side = pose ? resolveSide(pose, this.opts.side) : this.latest.side;
     const angles = pose ? jointAngles(pose, side, c.width, c.height) : EMPTY_ANGLES;
-    this.latest = { t, pose, side, angles, width: c.width, height: c.height };
+    const quality = pose ? assessFrame(pose, side, this.opts.hand, c.width, c.height) : null;
+    this.latest = {
+      t,
+      pose,
+      side,
+      angles,
+      width: c.width,
+      height: c.height,
+      quality,
+      countable: !!quality?.countable,
+    };
 
     drawOverlay(this.ctx, pose, side, angles, this.opts.mirrored);
     for (const cb of this.frameListeners) cb(this.latest);
@@ -170,6 +189,7 @@ export class FormPipeline {
       fps: this.fpsWindow.length,
       inferenceMs: this.inferenceMs,
       delegate: this.runner.delegate,
+      quality: this.latest.quality,
     };
     for (const cb of this.snapshotListeners) cb(snap);
   }

@@ -1,9 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { SessionRecorder } from '../../db/repo';
-import { CameraError, WakeLock, openCamera, stopStream, streamIsLive } from '../../engine/camera';
+import {
+  CameraError,
+  WakeLock,
+  cameraInfo,
+  openCamera,
+  stopStream,
+  streamIsLive,
+  type CameraInfo,
+} from '../../engine/camera';
 import { formatMetric, type MetricKey, type ShotMetrics } from '../../engine/metrics';
 import { FormPipeline } from '../../engine/pipeline';
-import { ShotDetector } from '../../engine/shotDetector';
+import { MODEL_QUALITIES, modelFile, type ModelQuality } from '../../engine/poseRunner';
+import { framingMessage } from '../../engine/quality';
+import { ShotDetector, type RejectReason } from '../../engine/shotDetector';
 import { SHOT_TYPES, type ShotTypeId } from '../../engine/shotTypes';
 import type { EngineSnapshot, JointAngles } from '../../engine/types';
 import { useApp } from '../../store/app';
@@ -22,6 +32,19 @@ interface LastShot {
 
 const CARD_METRICS: MetricKey[] = ['elbowRelease', 'kneeDip', 'releaseHeightCm', 'tempoMs'];
 
+/** Suggest a lighter model after the processed frame rate stays below this for SLOW_FOR_MS. */
+const MIN_FPS = 20;
+const SLOW_FOR_MS = 5000;
+
+const REJECT_MSG: Record<RejectReason, string> = {
+  quality: 'Not counted: turn side-on and keep your whole body in frame',
+  partial: 'Not counted: arm did not fully extend',
+};
+
+function lighter(m: ModelQuality): ModelQuality | null {
+  return m === 'heavy' ? 'full' : m === 'full' ? 'lite' : null;
+}
+
 export function LiveScreen() {
   const settings = useSettings();
   const { source, go } = useApp();
@@ -33,6 +56,31 @@ export function LiveScreen() {
   const [lastShot, setLastShot] = useState<LastShot | null>(null);
   const [fresh, setFresh] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [cam, setCam] = useState<CameraInfo | null>(null);
+  const [slowSuggest, setSlowSuggest] = useState<ModelQuality | null>(null);
+  const slowSince = useRef<number | null>(null);
+  const slowDismissed = useRef(false);
+
+  // Rejection notices disappear after a few seconds.
+  useEffect(() => {
+    if (!notice) return;
+    const id = setTimeout(() => setNotice(null), 3500);
+    return () => clearTimeout(id);
+  }, [notice]);
+
+  // Auto-suggest a lighter model if the frame rate stays low.
+  useEffect(() => {
+    if (!snap?.running || source.kind !== 'camera' || slowDismissed.current) return;
+    const next = lighter(settings.model);
+    if (!next || snap.fps >= MIN_FPS) {
+      slowSince.current = null;
+      return;
+    }
+    const now = performance.now();
+    slowSince.current ??= now;
+    if (now - slowSince.current >= SLOW_FOR_MS) setSlowSuggest(next);
+  }, [snap, settings.model, source.kind]);
 
   // Briefly highlight the card when a new shot lands.
   useEffect(() => {
@@ -52,8 +100,10 @@ export function LiveScreen() {
   useEffect(() => {
     const video = videoRef.current!;
     const canvas = canvasRef.current!;
-    const { mirrored, analysisSide, facing, hand, heightCm } = useSettings.getState();
-    const pipeline = new FormPipeline({ mirrored, side: analysisSide });
+    const { mirrored, analysisSide, facing, hand, heightCm, model } = useSettings.getState();
+    const pipeline = new FormPipeline({ mirrored, side: analysisSide, hand });
+    setSlowSuggest(null);
+    slowSince.current = null;
     pipelineRef.current = pipeline;
     const wake = new WakeLock();
     let stream: MediaStream | null = null;
@@ -65,8 +115,13 @@ export function LiveScreen() {
 
     const unsub = pipeline.onSnapshot(setSnap);
     const unsubFrames = pipeline.onFrame((ev) => {
-      const shot = detector.push(ev);
-      if (!shot) return;
+      const res = detector.push(ev);
+      if (!res) return;
+      if (res.kind === 'rejected') {
+        setNotice(REJECT_MSG[res.reason]);
+        return;
+      }
+      const { shot } = res;
       const type = useSettings.getState().shotType;
       recorder
         .save(shot, type)
@@ -81,6 +136,9 @@ export function LiveScreen() {
         });
     });
 
+    const onResize = () => setCam(cameraInfo(stream, video));
+    video.addEventListener('resize', onResize);
+
     const startCamera = async () => {
       stream = await openCamera(facing);
       if (cancelled) return stopStream(stream);
@@ -90,9 +148,11 @@ export function LiveScreen() {
 
     const run = async () => {
       try {
+        if (model === 'heavy')
+          setStatus({ kind: 'loading', msg: 'Loading accurate model (first time ~31 MB)…' });
         await pipeline.init({
           wasmBaseUrl: `${BASE}mediapipe/wasm`,
-          modelUrl: `${BASE}mediapipe/pose_landmarker_lite.task`,
+          modelUrl: `${BASE}mediapipe/${modelFile(model)}`,
         });
         if (cancelled) return;
         setStatus({ kind: 'loading', msg: 'Starting camera…' });
@@ -107,6 +167,7 @@ export function LiveScreen() {
         if (cancelled) return;
         pipeline.attach(video, canvas);
         pipeline.start();
+        onResize();
         await wake.acquire();
         setStatus({ kind: 'ready' });
       } catch (e) {
@@ -144,6 +205,7 @@ export function LiveScreen() {
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', onVisibility);
+      video.removeEventListener('resize', onResize);
       unsub();
       unsubFrames();
       pipeline.dispose();
@@ -154,7 +216,7 @@ export function LiveScreen() {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       void wake.release();
     };
-  }, [source]);
+  }, [source, settings.model]);
 
   const flip = settings.mirrored ? '-scale-x-100' : '';
 
@@ -207,9 +269,40 @@ export function LiveScreen() {
           </div>
         )}
 
-        {status.kind === 'ready' && snap && !snap.poseDetected && (
-          <div className="absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-black/70 px-4 py-2 text-lg">
-            Step into frame, side-on
+        {status.kind === 'ready' && snap && (
+          <QualityBanner
+            message={snap.poseDetected ? framingMessage(snap.quality) : 'Step into frame, side-on'}
+          />
+        )}
+
+        {notice && (
+          <div
+            role="status"
+            className="absolute inset-x-2 top-36 rounded-xl bg-black/85 p-3 text-center text-lg"
+          >
+            {notice}
+          </div>
+        )}
+
+        {slowSuggest && (
+          <div className="absolute inset-x-2 top-36 flex items-center gap-2 rounded-xl bg-black/90 p-3">
+            <span className="flex-1">
+              Only {snap?.fps ?? '?'} fps. Switch to{' '}
+              {MODEL_QUALITIES.find((m) => m.id === slowSuggest)!.label} for smoother tracking?
+            </span>
+            <button className="btn-primary" onClick={() => settings.set({ model: slowSuggest })}>
+              Switch
+            </button>
+            <button
+              className="btn-ghost"
+              aria-label="Keep current model"
+              onClick={() => {
+                slowDismissed.current = true;
+                setSlowSuggest(null);
+              }}
+            >
+              ✕
+            </button>
           </div>
         )}
 
@@ -259,13 +352,37 @@ export function LiveScreen() {
 
         {settings.showFps && snap && (
           <div className="absolute right-2 top-2 rounded bg-black/70 px-2 py-1 font-mono text-sm">
-            {snap.fps} fps · {snap.inferenceMs.toFixed(0)} ms · {snap.delegate ?? '–'} · {snap.side}
+            <div>
+              {snap.fps} fps · {snap.inferenceMs.toFixed(0)} ms · {snap.delegate ?? '–'} ·{' '}
+              {snap.side}
+            </div>
+            <div>
+              {cam
+                ? `cam ${cam.width}×${cam.height}${cam.frameRate ? ` @ ${cam.frameRate}` : ''}`
+                : 'cam –'}{' '}
+              · {MODEL_QUALITIES.find((m) => m.id === settings.model)!.label}
+            </div>
+            {snap.quality?.sideOnRatio != null && (
+              <div>side-on {snap.quality.sideOnRatio.toFixed(2)}</div>
+            )}
           </div>
         )}
       </div>
 
       <AngleTiles angles={snap?.angles ?? null} />
     </main>
+  );
+}
+
+function QualityBanner({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <div
+      role="status"
+      className="absolute inset-x-2 top-20 rounded-xl bg-amber-500 px-4 py-2 text-center text-xl font-bold text-black"
+    >
+      {message}
+    </div>
   );
 }
 
