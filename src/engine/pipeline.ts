@@ -15,6 +15,9 @@ export interface FrameEvent {
   pose: Pose | null;
   side: Side;
   angles: JointAngles;
+  /** Video size in pixels (landmarks are normalised to this). */
+  width: number;
+  height: number;
 }
 
 type Listener<T> = (v: T) => void;
@@ -40,7 +43,14 @@ export class FormPipeline {
   private lastSnapshotAt = 0;
   private fpsWindow: number[] = [];
   private inferenceMs = 0;
-  private latest: FrameEvent = { t: 0, pose: null, side: 'right', angles: EMPTY_ANGLES };
+  private latest: FrameEvent = {
+    t: 0,
+    pose: null,
+    side: 'right',
+    angles: EMPTY_ANGLES,
+    width: 0,
+    height: 0,
+  };
   private snapshotListeners = new Set<Listener<EngineSnapshot>>();
   private frameListeners = new Set<Listener<FrameEvent>>();
 
@@ -138,7 +148,7 @@ export class FormPipeline {
     const pose = raw ? this.smoother.smooth(raw, t) : null;
     const side = pose ? resolveSide(pose, this.opts.side) : this.latest.side;
     const angles = pose ? jointAngles(pose, side, c.width, c.height) : EMPTY_ANGLES;
-    this.latest = { t, pose, side, angles };
+    this.latest = { t, pose, side, angles, width: c.width, height: c.height };
 
     drawOverlay(this.ctx, pose, side, angles, this.opts.mirrored);
     for (const cb of this.frameListeners) cb(this.latest);

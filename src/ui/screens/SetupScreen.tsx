@@ -7,6 +7,7 @@ import { Segmented } from '../components/Segmented';
 export function SetupScreen() {
   const s = useSettings();
   const go = useApp((a) => a.go);
+  const openSession = useApp((a) => a.openSession);
   const fileRef = useRef<HTMLInputElement>(null);
 
   return (
@@ -83,6 +84,9 @@ export function SetupScreen() {
       <button className="btn-primary" onClick={() => go('live', { kind: 'camera' })}>
         Start camera
       </button>
+      <button className="btn-ghost" onClick={() => openSession(null)}>
+        History &amp; export
+      </button>
 
       <details className="rounded-xl bg-panel p-4" open>
         <summary className="text-lg font-semibold">Phone setup guide</summary>
@@ -92,6 +96,10 @@ export function SetupScreen() {
           <li>Stand exactly side-on to the camera, shooting arm nearest the lens.</li>
           <li>Whole body plus fully raised arms in frame, with some space above your hands.</li>
           <li>Good, even light; fitted clothing so joints are visible.</li>
+          <li>
+            Shots are counted automatically: start with the ball below your shoulders, shoot, and
+            let your hand come back down. Each shot is saved on the phone straight away.
+          </li>
           <li>Elbow flare cannot be measured from a side view.</li>
         </ul>
       </details>
